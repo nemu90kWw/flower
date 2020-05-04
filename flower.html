@@ -1,0 +1,419 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+<script type="text/javascript">
+	const color={0:"白", 1:"白", 3:"紫", 4:"黄", 5:"白", 7:"紫", 12:"黄", 13:"黄", 15:"白", 16:"赤", 17:"赤", 19:"赤", 20:"橙", 21:"赤", 23:"赤", 28:"橙", 29:"橙", 31:"赤", 48:"黒", 49:"黒", 51:"黒", 52:"橙", 53:"赤", 55:"黒", 60:"橙", 61:"橙", 63:"青", 64:"白", 65:"白", 67:"紫", 68:"黄", 69:"白", 71:"紫", 76:"黄", 77:"黄", 79:"白", 80:"桃", 81:"桃", 83:"桃", 84:"黄", 85:"桃", 87:"桃", 92:"黄", 93:"黄", 95:"桃", 112:"赤", 113:"赤", 115:"赤", 116:"橙", 117:"赤", 119:"赤", 124:"橙", 125:"橙", 127:"赤", 192:"白", 193:"白", 195:"紫", 196:"黄", 197:"白", 199:"紫", 204:"黄", 205:"黄", 207:"白", 208:"白", 209:"白", 211:"紫", 212:"黄", 213:"白", 215:"紫", 220:"黄", 221:"黄", 223:"白", 240:"桃", 241:"桃", 243:"桃", 244:"黄", 245:"白", 247:"紫", 252:"黄", 253:"黄", 255:"白"};
+	
+	function idToArray(num)
+	{
+		const results = [];
+		
+		results.push( num & 0x03 );      // 00000011
+		results.push((num & 0x0C) >> 2); // 00001100
+		results.push((num & 0x30) >> 4); // 00110000
+		results.push((num & 0xC0) >> 6); // 11000000
+		
+		return results;
+	}
+	
+	function idToString(num)
+	{
+		let result = "";
+		
+		for(let i = 0; i < 4; i++) {
+			switch(num & 3)
+			{
+			case 0: result += "00"; break;
+			case 1: result += "01"; break;
+			case 3: result += "11"; break;
+			default : result += num; break;
+			}
+			
+			if(i < 3) {
+				result += "-";
+			}
+			num >>= 2;
+		}
+		
+		return result;
+	}
+	
+	function stringToID(str)
+	{
+		let result = 0;
+		str.split("-").forEach((item, i) => {
+			switch(item)
+			{
+			case "00":
+				result += 0;
+				break;
+			case "01":
+				result += 1 << i * 2;
+				break;
+			case "11":
+				result += 3 << i * 2;
+				break;
+			}
+		});
+		return result;
+	}
+	
+	function couplingToString(num)
+	{
+		return "" + idToString(num & 0xFF) + " x " + idToString(num >> 8);
+	}
+	
+	function couplingID(x, y)
+	{
+		return (y << 8) + x;
+	}
+	
+	function couplingToArray(num)
+	{
+		return [num & 0xFF, num >> 8];
+	}
+	
+	const seeds = [];
+	const unknownSeeds = [];
+	const couplings = {};
+	const couplingCache = {};
+	
+	function addUnknownSeed(data, id, depth)
+	{
+		if(data[id] < filterRate) {return;}
+		
+		const cid = couplingID(data.parentX, data.parentY);
+		if(cid in unknownSeeds == false) {
+			unknownSeeds[cid] = {};
+		}
+		if(color[id] in unknownSeeds[cid] == false) {
+			unknownSeeds[cid][color[id]] = [];
+		}
+		unknownSeeds[cid][color[id]].push({id:id, rate:data[id], depth:depth});
+	}
+	
+	// 交配結果を返す
+	function mix(x, y)
+	{
+		if(couplingID(x, y) in couplingCache == true) {
+			return couplingCache[couplingID(x, y)];
+		}
+		
+		const result = [];
+		const a = idToArray(x);
+		const b = idToArray(y);
+		
+		const comb = [];
+		for(let i = 0; i < 4; i++) {
+			comb.push([]);
+			
+			if(a[i]+b[i] == 0) { comb[i] = [0, 0, 0, 0]; }
+			if(a[i]+b[i] == 1) { comb[i] = [0, 0, 1, 1]; }
+			if(a[i]+b[i] == 3) { comb[i] = [1, 1, 1, 1]; }
+			if(a[i]+b[i] == 2) { comb[i] = [0, 1, 1, 3]; }
+			if(a[i]+b[i] == 4) { comb[i] = [1, 1, 3, 3]; }
+			if(a[i]+b[i] == 6) { comb[i] = [3, 3, 3, 3]; }
+		}
+		
+		// 交配時の全組み合わせを確率に変換
+		for(let i = 0; i < 256; i++) {
+			let pattern = 0;
+			for(let j= 0; j < 4; j++) {
+				pattern += comb[j][(i >> j*2) & 3] << j * 2;
+			}
+			if(pattern in result == false) {
+				result[pattern] = 0;
+			}
+			result[pattern] += 1/256;
+		}
+		
+		result.parentX = x;
+		result.parentY = y;
+		couplingCache[couplingID(x, y)] = result.slice();
+		couplingCache[couplingID(x, y)].parentX = x;
+		couplingCache[couplingID(x, y)].parentY = y;
+		return result;
+	}
+	
+	function generatePollinationTree(depth = 1)
+	{
+		const results = [];
+		const newSeeds = [];
+	
+		const addSeed = (id, x, y, rate, d, color = "") =>
+		{
+			if(rate < filterRate) {return;}
+			
+			if(id in seeds == false) {
+				seeds[id] = [];
+				newSeeds.push(id);
+			}
+			
+			// 自己複製の組み合わせは親として登録しない
+			if(id == x || id == y) {
+				if(color == "") {
+					return;
+				}
+			}
+			
+			// すでにある
+			if(seeds[id].some((item) => item.parentX == x && item.parentY == y) == true) {
+					return;
+			}
+			
+			seeds[id].push({parentX:x, parentY:y, rate:rate, depth:d, color:color});
+		}
+		
+		// 種からの交配パターンを全捜査
+		seeds.forEach((item, targetX) => {
+			seeds.forEach((item, targetY) => {		
+				// 組み合わせ重複を防ぐ
+				const x = Math.min(targetX, targetY);
+				const y = Math.max(targetX, targetY);
+		
+				if(couplingID(x, y) in couplings == true) { return; }
+				
+				const result = mix(x, y);
+				
+				// 既知の組み合わせとして登録
+				couplings[couplingID(x, y)] = result;
+				results.push(result);
+			});
+		});
+		
+		if(colorCheck == true) {
+			// 不確定種の捜査
+			unknownSeeds.forEach((group, index) => {
+				Object.entries(group).forEach((data) => {
+					// 既に別ルートで確定した種のまとまりを削除
+					let count = 0;
+					data[1].forEach((data) => {
+						if(data.id in seeds == true) {
+							count++;
+						};
+					});
+					if(count == data[1].length) {
+						delete group[data[0]];
+						return;
+					}
+
+					// 独立色による種の検証
+					seeds.forEach((item, targetX) => {
+						const colors = {};
+						data[1].forEach((targetY) => {
+							// 組み合わせ重複を防ぐ
+							const x = Math.min(targetX, targetY.id);
+							const y = Math.max(targetX, targetY.id);
+
+							const tmp = mix(x, y);
+							Object.entries(tmp).forEach((item) => {
+								if(item[0] == "parentX" || item[0] == "parentY") { return; }
+								if(color[item[0]] in colors == false) {
+									colors[color[item[0]]] = [];
+								}
+								colors[color[item[0]]].push({id:targetY.id, parent:targetX, rate:item[1], parentRate:targetY.rate, parentDepth:targetY.depth});
+							});
+						});
+						let uniquePattern = Object.entries(colors).filter((item) => {
+							return item[1].length == 1 && item[1][0].id in seeds == false;
+						});
+						if(uniquePattern.length != 0) {
+							uniquePattern.forEach((item) => {
+								addSeed(item[1][0].id, item[1][0].id, item[1][0].parent, item[1][0].rate, depth, item[0][0]);
+								addSeed(item[1][0].id, couplingToArray(index)[0], couplingToArray(index)[1], item[1][0].parentRate, item[1][0].parentDepth);
+							});
+						}
+					});
+				});
+				if(Object.entries(group).length == 0) {
+					delete unknownSeeds[index];
+				}
+			});
+		}
+		
+		// 種の更新
+		results.forEach((data) => {
+			// 色の精査
+			const count = {};
+			data.forEach((item, id) => {
+				if(color[id] in count == false) {
+					count[color[id]] = 0;
+				}
+				count[color[id]]++;
+			});
+
+			// 区別不能な同色の振り分け
+			Object.entries(count).forEach((item) => {
+				if(item[1] >= 2) {
+					data.forEach((num, id) => {
+						if(color[id] == item[0]) {
+							addUnknownSeed(data, id, depth);
+							delete data[id];
+						}
+					});
+				}
+			});
+
+			// 自己増殖と区別不可能な色の排除
+			data.forEach((num, id) => {
+				if(color[id] == color[data.parentX] && color[id] == color[data.parentY]) {
+					if(id !== data.parentX || id != data.parentY)
+					{
+						if(id != data.parentX) {
+							addUnknownSeed(data, data.parentX, depth);
+						}
+						if(id != data.parentY) {
+							addUnknownSeed(data, data.parentY, depth);
+						}
+						addUnknownSeed(data, id, depth);
+					}
+					delete data[id];
+				}
+			});
+			
+			// 登録
+			data.forEach((item, id) => {
+				addSeed(id, data.parentX, data.parentY, item, depth);
+			});
+		});
+		
+		if(newSeeds.length != 0) {
+			//displayAllSeeds(newSeeds);
+			console.log("depth:"+depth+" seeds:" + Object.entries(seeds).length+" newSeeds:" + newSeeds.length+" unknownSeeds:" + Object.entries(unknownSeeds).length+" couplings:" + Object.entries(couplings).length);
+			
+			generatePollinationTree(depth + 1);
+			return;
+		}
+		console.log("Done. couplings:" + Object.entries(couplings).length);
+		
+		Object.entries(seeds).forEach((item) => {
+			console.log(color[item[0]] + " " + item[0] + " " + idToString(item[0]));
+			item[1].sort((a, b) => {
+				if(a.depth != b.depth) { return a.depth - b.depth; }
+				if(a.rate != b.rate) { return b.rate - a.rate; }
+				if(a.parentX != b.parentX) { return b.parentX != a.parentX; }
+				return b.parentY != a.parentY;
+			});
+			console.log(item[1]);
+		});
+	}
+	
+	// 特定種へのルートを探す
+	function searchTarget(target)
+	{
+		const patterns = [];
+		let tmp = [];
+		const colortmp = [];
+		let queue;
+		let t = [target];
+		
+		for(let depth = seeds[target][0].depth; depth > 0; depth--)
+		{
+			queue = t;
+			t = [];
+			
+			patterns.unshift({});
+			
+			while(queue.length > 0)
+			{
+				const q = queue.shift();
+				const list = seeds[q].filter((item) => { return (item.depth <= depth && item.color == "") || (item.depth == depth && item.color != ""); });
+				
+				list.forEach((item) => {
+					if(tmp.some((x) => x == item.parentX) == false) {
+						t.push(item.parentX);
+						tmp.push(item.parentX);
+					}
+					if(tmp.some((y) => y == item.parentY) == false) {
+						t.push(item.parentY);
+						tmp.push(item.parentY);
+					}
+					if(item.color != "" && colortmp.some((x) => x == q) == false) {
+						colortmp.push(q);
+					}
+				});
+				while(colortmp.length > 0) {
+					t.push(colortmp.shift());
+				}
+				
+				patterns[0][q] = list;
+			}
+			tmp = [];
+		}
+		return patterns;
+	}
+	
+	function displayAllSeeds(objects)
+	{
+		const p = document.createElement("p");
+		Object.entries(objects).forEach((item) => {
+			p.innerHTML += color[item[1]]+" "+idToString(item[1])+"<br>";
+		});
+		document.body.insertAdjacentElement("beforeend", p);
+	}
+	
+	const filterRate = 0.25;	// 間引きを行う閾値
+	const colorCheck = true;
+	
+	window.onload = () => {
+		// 種
+		seeds[stringToID("01-00-00-00")] = [];
+		seeds[stringToID("00-00-11-01")] = [];
+		seeds[stringToID("00-11-00-00")] = [];
+		
+		generatePollinationTree();
+		const patterns = searchTarget(stringToID("11-11-11-00"));
+		
+		const uniqueIDStrings = {};
+		const colorNames = {};
+		let currentSeeds = [stringToID("01-00-00-00"), stringToID("00-11-00-00"), stringToID("00-00-11-01")];
+		const newSeeds = [];
+		
+		for(let i = 0; i < patterns.length; i++) {
+			const p = document.createElement("p");
+			p.innerHTML += "交配"+(i+1)+"回目<br>";
+			
+			const getUniqueIDStrings = (id) => {
+					if(id in uniqueIDStrings == false) {
+						if(color[id] in colorNames == false) {
+							colorNames[color[id]] = 0;
+						}
+						if(id == stringToID("01-00-00-00") || id == stringToID("00-11-00-00") || id == stringToID("00-00-11-01")) {
+							uniqueIDStrings[id] = "種"+color[id]+" "+idToString(id);
+						}
+						else {
+							uniqueIDStrings[id] = color[id]+String.fromCharCode("α".charCodeAt(0)+colorNames[color[id]])+" "+idToString(id);
+							colorNames[color[id]]++;
+						}
+					}
+					return uniqueIDStrings[id];
+			}
+			
+			Object.entries(patterns[i]).forEach((list) => {
+				list[1].forEach((item) => {
+					// 先祖返り防止
+					if(currentSeeds.some((data) => data == list[0]) == true && item.color == "") {return;}
+					
+					const id = list[0];
+					p.innerHTML += getUniqueIDStrings(item.parentX)+" x "
+					p.innerHTML += getUniqueIDStrings(item.parentY)+" = "
+					p.innerHTML += getUniqueIDStrings(list[0])+" ";
+					p.innerHTML += item.rate*100+"% "
+					if(item.color != "") {
+						p.innerHTML += item.color + "生成チェック";
+					}
+					p.innerHTML += "<br>";
+					
+					newSeeds.push(list[0]);
+				});
+			});
+			currentSeeds = currentSeeds.concat(newSeeds);
+			document.body.insertAdjacentElement("beforeend", p);
+		}
+	}
+	
+</script>
+</head>
+<body>
+</body>
+</html>
